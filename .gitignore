@@ -1,0 +1,35 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+
+# Build and dist
+dist
+dist-ssr
+
+# Local files
+*.local.*       # Plus précis pour les fichiers locaux
+.env.local    # Exemple pour les fichiers .env locaux
+
+# Editor related
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Visual Studio (Si vous utilisez VS, sinon les supprimer)
+*.sln
+
+# Obsolete Visual Studio files (À supprimer si non utilisé)
+#*.ntvs*
+#*.njsproj
+
+# Système d'exploitation
+*.sw?
