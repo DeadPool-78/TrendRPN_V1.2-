@@ -103,10 +103,19 @@ export const Chart: React.FC<ChartProps> = ({
       name: variable.name,
       values: data
         .filter(d => d.Name === variable.name && d.TextAttr03 === variable.textAttr03)
-        .map(d => ({
-          date: new Date(d.TS),
-          value: d.Value
-        }))
+        .map(d => {
+          const date = new Date(Number(d.Chrono) / 10000); // Conversion du Chrono en timestamp
+          const value = Number(d.Value);
+          
+          // Vérification des valeurs invalides
+          if (isNaN(date.getTime()) || isNaN(value)) {
+            console.warn('Valeur invalide détectée:', { date, value, originalData: d });
+            return null;
+          }
+          
+          return { date, value };
+        })
+        .filter((d): d is ProcessedDataPoint => d !== null) // Filtrer les valeurs nulles
         .sort((a, b) => a.date.getTime() - b.date.getTime())
     }));
 
@@ -116,7 +125,7 @@ export const Chart: React.FC<ChartProps> = ({
       return;
     }
 
-    // Échelles
+    // Vérification des échelles
     const allDates = processed.flatMap(d => d.values.map(v => v.date));
     const allValues = processed.flatMap(d => d.values.map(v => v.value));
     
@@ -128,6 +137,12 @@ export const Chart: React.FC<ChartProps> = ({
     const extent = d3.extent(allDates) as [Date, Date];
     const valueExtent = d3.extent(allValues) as [number, number];
     
+    // Vérification supplémentaire des domaines
+    if (!extent[0] || !extent[1] || !valueExtent[0] || !valueExtent[1]) {
+      console.warn('Domaines invalides:', { extent, valueExtent });
+      return;
+    }
+
     const xScale = d3.scaleTime()
       .domain(currentDomain || extent)
       .range([0, innerWidth]);
