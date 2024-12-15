@@ -1,5 +1,11 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, enableIndexedDbPersistence, doc, setDoc } from 'firebase/firestore';
+import { 
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  doc,
+  setDoc
+} from 'firebase/firestore';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { Analytics, getAnalytics, isSupported } from 'firebase/analytics';
 
@@ -23,29 +29,23 @@ console.log('Initializing Firebase with config:', {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+// Initialize Firestore with new cache configuration
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
+
 // Initialize Auth with persistence
 const auth = getAuth(app);
-setPersistence(auth, browserLocalPersistence).catch(error => {
-  console.error("Error setting auth persistence:", {
-    code: error.code,
-    message: error.message,
-    details: error
+setPersistence(auth, browserLocalPersistence)
+  .catch(error => {
+    console.error("Erreur lors de la configuration de la persistance:", {
+      code: error.code,
+      message: error.message,
+      details: "Vérifiez la configuration de l'authentification"
+    });
   });
-});
-
-// Initialize Firestore
-const db = getFirestore(app);
-
-// Enable offline persistence for Firestore
-enableIndexedDbPersistence(db, {
-  synchronizeTabs: true
-}).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    console.warn('Multiple tabs open, persistence enabled in first tab only');
-  } else if (err.code === 'unimplemented') {
-    console.warn('Browser doesn\'t support persistence');
-  }
-});
 
 // Initialize Analytics only if supported
 let analytics: Analytics | null = null;
@@ -81,7 +81,7 @@ const testFirebaseConnection = async () => {
         timestamp: new Date().toISOString(),
         test: true
       }, { merge: true });
-      console.log('Firestore write test successful');
+      console.log('Test document written successfully');
       
       // Clean up test document
       await setDoc(testRef, { 

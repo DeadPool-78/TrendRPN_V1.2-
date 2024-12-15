@@ -8,13 +8,13 @@ interface DataState {
   fileData: FileData | null;
   isLoading: boolean;
   error: string | null;
-  setData: (data: DataPoint[]) => Promise<void>;
-  setVariables: (variables: Variable[]) => Promise<void>;
+  setData: (data: DataPoint[]) => Promise<DataPoint[]>;
+  setVariables: (variables: Variable[]) => Promise<Variable[]>;
   setFileData: (fileData: FileData) => Promise<void>;
   clearData: () => Promise<void>;
 }
 
-const useDataStore = create<DataState>((set, get) => ({
+const useDataStore = create<DataState>((set) => ({
   data: [],
   variables: [],
   fileData: null,
@@ -23,35 +23,35 @@ const useDataStore = create<DataState>((set, get) => ({
 
   setData: async (data: DataPoint[]) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ data, isLoading: false, error: null });
       const db = await dbService.getDB();
       await db.put('data', data, 'currentData');
-      set({ data, isLoading: false });
+      return data;
     } catch (error) {
       console.error('Error storing data:', error);
-      set({ 
-        error: error instanceof Error ? error.message : 'Error storing data',
-        isLoading: false 
-      });
+      set({ error: error instanceof Error ? error.message : 'Error storing data' });
+      return [];
     }
   },
 
   setVariables: async (variables: Variable[]) => {
     try {
+      set({ variables, error: null });
       const db = await dbService.getDB();
       await db.put('variables', variables, 'currentVariables');
-      set({ variables });
+      return variables;
     } catch (error) {
       console.error('Error storing variables:', error);
       set({ error: error instanceof Error ? error.message : 'Error storing variables' });
+      return [];
     }
   },
 
   setFileData: async (fileData: FileData) => {
     try {
+      set({ fileData, error: null });
       const db = await dbService.getDB();
       await db.put('fileData', fileData, 'currentFileData');
-      set({ fileData });
     } catch (error) {
       console.error('Error storing file data:', error);
       set({ error: error instanceof Error ? error.message : 'Error storing file data' });
@@ -60,18 +60,13 @@ const useDataStore = create<DataState>((set, get) => ({
 
   clearData: async () => {
     try {
+      set({ data: [], variables: [], fileData: null, error: null });
       const db = await dbService.getDB();
       await Promise.all([
         db.delete('data', 'currentData'),
         db.delete('variables', 'currentVariables'),
         db.delete('fileData', 'currentFileData')
       ]);
-      set({
-        data: [],
-        variables: [],
-        fileData: null,
-        error: null
-      });
     } catch (error) {
       console.error('Error clearing data:', error);
       set({ error: error instanceof Error ? error.message : 'Error clearing data' });

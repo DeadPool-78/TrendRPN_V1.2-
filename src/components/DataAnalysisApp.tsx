@@ -8,18 +8,14 @@ import { FileInfo } from './FileInfo';
 import { StatsTable } from './StatsTable';
 import { Oscilloperturbo } from './Oscilloperturbo';
 import { FileDown, Activity, Table, Upload, Trash2 } from 'lucide-react';
-import type { Model } from '../types/data';
+import type { Model, FileData } from '../types/data';
 import { calculateStats } from '../utils/statistics';
 import { exportToExcel } from '../utils/excelExport';
-import { schemeCategory10 } from 'd3';
 import { useDataStore } from '../stores/dataStore';
-import { useDataLoader } from '../hooks/useDataLoader';
-
-const footerText = "Développé par Kévin LANDAIS - EDF - CNPE Gravelines - 12-2024 - V1.2";
+import { schemeCategory10 } from 'd3';
 
 export const DataAnalysisApp: React.FC = () => {
-  const { data, variables, fileData, setVariables, clearData } = useDataStore();
-  const { handleDataLoaded } = useDataLoader();
+  const { data, variables, fileData, setVariables, setData, setFileData, clearData } = useDataStore();
   const [showDataView, setShowDataView] = useState(false);
   const [showOscillo, setShowOscillo] = useState(false);
   const [showFileUpload, setShowFileUpload] = useState(false);
@@ -34,7 +30,7 @@ export const DataAnalysisApp: React.FC = () => {
   });
 
   useEffect(() => {
-    if (data.length > 0) {
+    if (data.length > 0 && variables.length > 0) {
       console.log('Données disponibles:', data.length);
       console.log('Variables sélectionnées:', variables.filter(v => v.selected).length);
       console.log('Exemple de données:', data[0]);
@@ -44,10 +40,27 @@ export const DataAnalysisApp: React.FC = () => {
 
   const handleFileUpload = async (parsedData: any, file: File) => {
     try {
-      console.log('Données reçues:', parsedData);
-      await handleDataLoaded(parsedData, file);
-      console.log('Données chargées dans le store:', data);
-      console.log('Variables:', variables);
+      // Définir les variables d'abord
+      const newVariables = parsedData.variables.map((v: any) => ({
+        ...v,
+        selected: false
+      }));
+      await setVariables(newVariables);
+
+      // Puis définir les données
+      const newData = parsedData.data;
+      await setData(newData);
+
+      // Enfin, définir les informations du fichier
+      const fileInfo: FileData = {
+        fileName: file.name,
+        fileSize: file.size,
+        firstTimestamp: parsedData.firstTimestamp,
+        lastTimestamp: parsedData.lastTimestamp,
+        variablesCount: parsedData.variables.length
+      };
+      await setFileData(fileInfo);
+
       setShowFileUpload(false);
     } catch (error) {
       console.error('Erreur lors du chargement du fichier:', error);
@@ -66,13 +79,23 @@ export const DataAnalysisApp: React.FC = () => {
     localStorage.setItem('savedModels', JSON.stringify(updatedModels));
   };
 
-  const handleLoadModel = (model: Model) => {
-    setVariables(
-      variables.map(v => ({
-        ...v,
-        selected: model.variables.includes(v.id)
-      }))
-    );
+  const handleLoadModel = async (model: Model) => {
+    console.log('Loading model:', model.name);
+    console.log('Model variables:', model.variables);
+    
+    // Créer un Set pour une recherche plus rapide
+    const modelVarSet = new Set(model.variables);
+    
+    const updatedVariables = variables.map(v => {
+      const format1 = `${v.name}_${v.textAttr03}`;
+      const format2 = v.name;
+      const isSelected = modelVarSet.has(format1) || modelVarSet.has(format2);
+      return { ...v, selected: isSelected };
+    });
+    
+    const selectedVars = updatedVariables.filter(v => v.selected);
+    console.log('Variables sélectionnées:', selectedVars.map(v => v.displayName));
+    await setVariables(updatedVariables);
   };
 
   const handleClearData = () => {
@@ -164,11 +187,11 @@ export const DataAnalysisApp: React.FC = () => {
                 />
               </div>
 
-              {/* Right Content - Chart and Stats */}
+              {/* Right Content - Chart and Stats Table */}
               <div className="flex flex-col gap-4">
                 <div className="bg-white rounded-lg shadow p-4">
                   <Chart
-                    data={data.filter(d => variables.find(v => v.selected && v.id === d.Name))}
+                    data={data}
                     selectedVariables={variables.filter(v => v.selected)}
                     onTimeSelect={setCurrentReferenceTime}
                     onZoom={handleZoom}
@@ -178,19 +201,16 @@ export const DataAnalysisApp: React.FC = () => {
                   />
                 </div>
 
-                {/* Stats Table - Below Chart */}
-                {variables.some(v => v.selected) && (
+                {/* Stats Table */}
+                {variables.some(v => v.selected) && zoomStats && (
                   <div className="bg-white rounded-lg shadow p-4">
                     <StatsTable
-                      stats={zoomStats || variables
-                        .filter(v => v.selected)
-                        .map(v => ({
-                          variable: v.name,
-                          stats: calculateStats(
-                            data.filter(d => d.Name === v.id),
-                            v.name
-                          )
-                        }))}
+                      stats={zoomStats.map(stat => ({
+                        variable: variables.find(
+                          v => v.name === stat.variable
+                        )?.displayName || stat.variable,
+                        stats: stat.stats
+                      }))}
                       variableColors={variables
                         .filter(v => v.selected)
                         .map((_, i) => schemeCategory10[i % schemeCategory10.length])}
@@ -211,7 +231,7 @@ export const DataAnalysisApp: React.FC = () => {
 
       {/* Footer */}
       <footer className="bg-white border-t py-2 px-4 text-center text-sm text-gray-600">
-        {footerText}
+        Développé par Kévin LANDAIS - EDF - CNPE Gravelines - 12-2024 - V1.2
       </footer>
 
       {/* Modals */}

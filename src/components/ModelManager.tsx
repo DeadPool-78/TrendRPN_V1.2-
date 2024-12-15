@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
 import * as Label from '@radix-ui/react-label';
-import { Save, Folder, X, Upload, Download } from 'lucide-react';
+import { Save, Folder, Upload, Download } from 'lucide-react';
 import { Variable, Model, ModelSchema } from '../types/data';
+import { CustomDialog } from './Dialog';
 
 interface ModelManagerProps {
   selectedVariables: Variable[];
@@ -25,7 +25,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (modelName.trim()) {
+    if (modelName.trim() && selectedVariables.length > 0) {
       onSaveModel(modelName.trim());
       setModelName('');
       setIsOpen(false);
@@ -33,6 +33,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   };
 
   const handleExport = () => {
+    if (models.length === 0) return;
     const exportData = JSON.stringify(models, null, 2);
     const blob = new Blob([exportData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -67,150 +68,143 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             localStorage.setItem('savedModels', JSON.stringify([...models, ...validModels]));
             window.location.reload();
           } else {
-            alert('No valid models found in the imported file');
+            alert('Aucun modèle valide trouvé dans le fichier');
           }
         }
       } catch (error) {
-        alert('Error importing models. Please check the file format.');
+        alert('Erreur lors de l\'importation des modèles. Vérifiez le format du fichier.');
       }
     };
     reader.readAsText(file);
   };
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
+    <>
       <div className="flex space-x-2">
-        <Dialog.Trigger asChild>
-          <button
-            className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-            disabled={selectedVariables.length === 0}
-            onClick={() => setView('save')}
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Model</span>
-          </button>
-        </Dialog.Trigger>
+        <button
+          className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+          disabled={selectedVariables.length === 0}
+          onClick={() => {
+            setView('save');
+            setIsOpen(true);
+          }}
+        >
+          <Save className="w-4 h-4" />
+          Sauvegarder
+        </button>
         
-        <Dialog.Trigger asChild>
-          <button
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-            onClick={() => setView('load')}
-          >
-            <Folder className="w-4 h-4" />
-            <span>Load Model</span>
-          </button>
-        </Dialog.Trigger>
+        <button
+          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          onClick={() => {
+            setView('load');
+            setIsOpen(true);
+          }}
+        >
+          <Folder className="w-4 h-4" />
+          Charger
+        </button>
       </div>
 
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl p-6 w-[400px] max-h-[85vh] overflow-y-auto">
-          <div className="flex justify-between items-center mb-4">
-            <Dialog.Title className="text-lg font-semibold">
-              {view === 'save' ? 'Save Model' : 'Load Model'}
-            </Dialog.Title>
-            <Dialog.Close asChild>
-              <button className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </Dialog.Close>
-          </div>
-
-          {view === 'save' && selectedVariables.length > 0 ? (
-            <form onSubmit={handleSave}>
-              <div className="space-y-4">
-                <div>
-                  <Label.Root className="block text-sm font-medium text-gray-700 mb-1">
-                    Model Name
-                  </Label.Root>
-                  <input
-                    type="text"
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Enter model name"
-                  />
-                </div>
-                <div>
-                  <Label.Root className="block text-sm font-medium text-gray-700 mb-1">
-                    Selected Variables
-                  </Label.Root>
-                  <div className="bg-gray-50 p-3 rounded-md space-y-1">
-                    {selectedVariables.map((variable, index) => (
-                      <div key={`${instanceId}-var-${index}-${variable.id}`} className="text-sm text-gray-600">
-                        {variable.displayName}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                >
-                  Save Model
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex space-x-2 mb-4">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>Import Models</span>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json"
-                  onChange={handleImport}
-                  className="hidden"
-                />
-                
-                <button
-                  onClick={handleExport}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                  disabled={models.length === 0}
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Export Models</span>
-                </button>
-              </div>
-
-              {models.length > 0 ? (
-                <div className="grid gap-2">
-                  {models.map((model, index) => (
-                    <button
-                      key={`${instanceId}-model-${index}-${model.id}`}
-                      onClick={() => {
-                        onLoadModel(model);
-                        setIsOpen(false);
-                      }}
-                      className="flex items-center justify-between w-full px-4 py-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
-                    >
-                      <div>
-                        <div className="font-medium">{model.name}</div>
-                        <div className="text-sm text-gray-500">
-                          {model.variables.length} variables
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-400">
-                        {new Date(model.createdAt).toLocaleDateString()}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center text-gray-500 py-4">
-                  No saved models found
-                </div>
-              )}
+      <CustomDialog
+        title={view === 'save' ? 'Sauvegarder le modèle' : 'Charger un modèle'}
+        description={view === 'save' 
+          ? 'Sauvegardez votre sélection actuelle de variables comme un modèle pour une utilisation ultérieure.'
+          : 'Chargez un modèle précédemment sauvegardé pour restaurer une sélection de variables.'}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+      >
+        {view === 'save' && selectedVariables.length > 0 ? (
+          <form onSubmit={handleSave} className="space-y-4">
+            <div>
+              <Label.Root className="block text-sm font-medium text-gray-700 mb-1">
+                Nom du modèle
+              </Label.Root>
+              <input
+                type="text"
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Entrez le nom du modèle"
+              />
             </div>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+            <div>
+              <Label.Root className="block text-sm font-medium text-gray-700 mb-1">
+                Variables sélectionnées
+              </Label.Root>
+              <div className="bg-gray-50 p-3 rounded-md space-y-1">
+                {selectedVariables.map((variable, index) => (
+                  <div key={`${instanceId}-var-${index}-${variable.id}`} className="text-sm text-gray-600">
+                    {variable.displayName}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button
+              type="submit"
+              className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              Sauvegarder
+            </button>
+          </form>
+        ) : view === 'load' ? (
+          <div className="space-y-4">
+            <div className="flex space-x-2 mb-4">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Importer</span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImport}
+                className="hidden"
+              />
+              
+              <button
+                onClick={handleExport}
+                className="flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                disabled={models.length === 0}
+              >
+                <Download className="w-4 h-4" />
+                <span>Exporter</span>
+              </button>
+            </div>
+
+            {models.length > 0 ? (
+              <div className="grid gap-2">
+                {models.map((model, index) => (
+                  <button
+                    key={`${instanceId}-model-${index}-${model.id}`}
+                    onClick={() => {
+                      onLoadModel(model);
+                      setIsOpen(false);
+                    }}
+                    className="flex items-center justify-between w-full px-4 py-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                  >
+                    <div>
+                      <div className="font-medium">{model.name}</div>
+                      <div className="text-sm text-gray-500">
+                        {model.variables.length} variables
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-400">
+                      {new Date(model.createdAt).toLocaleDateString()}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 py-4">
+                Aucun modèle sauvegardé
+              </div>
+            )}
+          </div>
+        ) : null}
+      </CustomDialog>
+    </>
   );
 };

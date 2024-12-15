@@ -56,8 +56,11 @@ export const useDataLoader = () => {
         const mergedVars = [...variables, ...newVars];
         await setVariables(mergedVars);
       } else {
-        await setData(enrichedData);
-        await setVariables(parsedData.variables);
+        // S'assurer que les données sont bien enregistrées avant de continuer
+        await Promise.all([
+          setData(enrichedData),
+          setVariables(parsedData.variables.map(v => ({ ...v, selected: false })))
+        ]);
       }
 
       const fileInfo = await calculateFileInfo(parsedData.data, file);
