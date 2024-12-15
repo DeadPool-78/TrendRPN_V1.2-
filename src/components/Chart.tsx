@@ -1,17 +1,48 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { DataPoint, Variable, DatasetStats } from '../types/data';
+
+interface DataPoint {
+  Chrono: string;
+  Name: string;
+  Value: number;
+  Quality: number;
+  TextAttr03: string;
+  TS: string;
+}
+
+interface ProcessedDataPoint {
+  date: Date;
+  value: number;
+}
+
+interface SeriesData {
+  name: string;
+  values: ProcessedDataPoint[];
+}
+
+interface Variable {
+  id: string;
+  name: string;
+  textAttr03: string;
+  displayName: string;
+  selected: boolean;
+}
+
+interface DatasetStats {
+  mean: number;
+  median: number;
+  stdDev: number;
+  min: number;
+  max: number;
+  count: number;
+}
 
 interface ChartProps {
   data: DataPoint[];
   selectedVariables: Variable[];
   variableColors: string[];
   onZoom: (stats: Array<{ variable: string; stats: DatasetStats | null }>) => void;
-}
-
-interface ProcessedData {
-  name: string;
-  values: Array<{ date: Date; value: number; name: string }>;
+  onOscilloClick?: (timestamp: number) => void;
 }
 
 interface ChartStats {
@@ -38,258 +69,274 @@ export const Chart: React.FC<ChartProps> = ({
   data,
   selectedVariables,
   variableColors,
-  onZoom
+  onZoom,
+  onOscilloClick
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-  const [currentZoomState, setCurrentZoomState] = useState<d3.ZoomTransform>(d3.zoomIdentity);
-  const zoomRef = useRef<any>(null);
-  const mainChartRef = useRef<any>(null);
+  const [currentDomain, setCurrentDomain] = useState<[Date, Date] | null>(null);
 
   useEffect(() => {
     if (!data.length || !selectedVariables.length || !svgRef.current) return;
 
-    const tooltip = d3.select(tooltipRef.current)
-      .style("position", "absolute")
-      .style("visibility", "hidden")
-      .style("background-color", "white")
-      .style("border", "1px solid #ddd")
-      .style("border-radius", "4px")
-      .style("padding", "8px")
-      .style("pointer-events", "none")
-      .style("z-index", "9999");
+    // Configuration des dimensions
+    const width = svgRef.current.parentElement?.clientWidth || 800;
+    const mainHeight = 400;
+    const navHeight = 100;
+    const margin = { top: 20, right: 30, bottom: 30, left: 60 };
+    const totalHeight = mainHeight + navHeight + margin.top + margin.bottom;
 
-    const processed: ProcessedData[] = selectedVariables.map(variable => {
-      const values = data
-        .filter(d => d.Name === variable.name && d.TextAttr03 === variable.textAttr03)
-        .map(d => {
-          const timestamp = Math.floor(parseInt(d.Chrono) / 1000000);
-          const date = new Date(timestamp);
-          return {
-            date,
-            value: typeof d.Value === 'number' ? d.Value : 0,
-            name: variable.name
-          };
-        })
-        .filter(d => !isNaN(d.date.getTime()) && !isNaN(d.value))
-        .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-      return {
-        name: variable.name,
-        values
-      };
-    }).filter(series => series.values.length > 0);
-
+    // Nettoyage et configuration du SVG
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
-
-    const width = svgRef.current.parentElement?.clientWidth || 800;
-    const baseHeight = 400;
-    const totalHeight = baseHeight + 100;
-
     svg
       .attr("width", width)
       .attr("height", totalHeight)
       .style("width", "100%")
       .style("height", totalHeight + "px");
 
-    const margin = { top: 20, right: 50, bottom: 100, left: 50 };
+    // Dimensions internes
     const innerWidth = width - margin.left - margin.right;
-    const innerHeight = baseHeight - margin.top - margin.bottom;
+    const mainInnerHeight = mainHeight - margin.top - margin.bottom;
 
+    // Traitement des données avec la structure correcte
+    const processed: SeriesData[] = selectedVariables.map(variable => ({
+      name: variable.name,
+      values: data
+        .filter(d => d.Name === variable.name && d.TextAttr03 === variable.textAttr03)
+        .map(d => ({
+          date: new Date(d.TS),
+          value: d.Value
+        }))
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+    }));
+
+    // Vérifier qu'il y a des données valides
+    if (processed.some(series => series.values.length === 0)) {
+      console.warn('Certaines séries sont vides');
+      return;
+    }
+
+    // Échelles
     const allDates = processed.flatMap(d => d.values.map(v => v.date));
     const allValues = processed.flatMap(d => d.values.map(v => v.value));
+    
+    if (allDates.length === 0 || allValues.length === 0) {
+      console.warn('Pas de données à afficher');
+      return;
+    }
 
+    const extent = d3.extent(allDates) as [Date, Date];
+    const valueExtent = d3.extent(allValues) as [number, number];
+    
     const xScale = d3.scaleTime()
-      .domain([
-        d3.min(allDates) || new Date(),
-        d3.max(allDates) || new Date()
-      ])
+      .domain(currentDomain || extent)
       .range([0, innerWidth]);
 
     const yScale = d3.scaleLinear()
-      .domain([
-        d3.min(allValues) || 0,
-        d3.max(allValues) || 1
-      ])
-      .range([innerHeight, 0]);
+      .domain(valueExtent)
+      .range([mainInnerHeight, 0]);
 
-    const line = d3.line<{ date: Date; value: number }>()
-      .x(d => xScale(d.date))
-      .y(d => yScale(d.value))
-      .curve(d3.curveStepAfter)
-      .defined(d => !isNaN(d.value) && !isNaN(d.date.getTime()));
+    // Format de date pour l'axe X
+    const timeFormat = d3.timeFormat("%d/%m/%y %H:%M");
 
+    // Axes
     const mainChart = svg.append("g")
       .attr("class", "main-chart")
       .attr("transform", `translate(${margin.left},${margin.top})`);
-    
-    mainChartRef.current = mainChart;
 
-    mainChart.append("g")
+    const xAxis = mainChart.append("g")
       .attr("class", "x-axis")
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(d3.axisBottom(xScale));
+      .attr("transform", `translate(0,${mainInnerHeight})`)
+      .call(d3.axisBottom(xScale)
+        .tickFormat((d: any) => timeFormat(d)));
 
-    mainChart.append("g")
+    // Rotation des labels de l'axe X pour une meilleure lisibilité
+    xAxis.selectAll("text")
+      .style("text-anchor", "end")
+      .attr("dx", "-.8em")
+      .attr("dy", ".15em")
+      .attr("transform", "rotate(-45)");
+
+    const yAxis = mainChart.append("g")
       .attr("class", "y-axis")
       .call(d3.axisLeft(yScale));
 
-    processed.forEach((series, i) => {
-      if (series.values.length === 0) return;
+    // Création du tooltip
+    const tooltipDiv = d3.select("body").append("div")
+      .attr("class", "tooltip")
+      .style("position", "absolute")
+      .style("visibility", "hidden")
+      .style("background-color", "rgba(255, 255, 255, 0.9)")
+      .style("border", "1px solid #ddd")
+      .style("border-radius", "4px")
+      .style("padding", "8px")
+      .style("pointer-events", "none")
+      .style("z-index", "9999")
+      .style("font-size", "12px");
 
+    // Overlay pour la gestion des événements de souris
+    const overlay = mainChart.append("rect")
+      .attr("class", "overlay")
+      .attr("width", innerWidth)
+      .attr("height", mainInnerHeight)
+      .style("fill", "none")
+      .style("pointer-events", "all");
+
+    // Ligne verticale pour le tooltip
+    const tooltipLine = mainChart.append("line")
+      .attr("class", "tooltip-line")
+      .style("stroke", "#999")
+      .style("stroke-dasharray", "3,3")
+      .style("opacity", 0);
+
+    // Fonction pour mettre à jour le tooltip
+    const updateTooltip = (event: MouseEvent) => {
+      const [mouseX] = d3.pointer(event);
+      const date = xScale.invert(mouseX);
+      
+      const tooltipData = processed.map(series => {
+        const bisect = d3.bisector<ProcessedDataPoint, Date>(d => d.date).left;
+        const index = bisect(series.values, date);
+        const point = series.values[index];
+        return {
+          name: series.name,
+          point: point
+        };
+      }).filter(d => d.point && !isNaN(d.point.value));
+
+      if (tooltipData.length > 0) {
+        tooltipLine
+          .style("opacity", 1)
+          .attr("x1", mouseX)
+          .attr("x2", mouseX)
+          .attr("y1", 0)
+          .attr("y2", mainInnerHeight);
+
+        tooltipDiv
+          .style("visibility", "visible")
+          .style("left", (event.pageX + 15) + "px")
+          .style("top", (event.pageY - 28) + "px")
+          .html(`
+            <strong>Date: ${timeFormat(date)}</strong><br/>
+            ${tooltipData.map((d, i) => `
+              <span style="color:${variableColors[i]}">
+                ${d.name}: ${d.point.value.toFixed(3)}
+              </span>
+            `).join("<br/>")}
+          `);
+      }
+    };
+
+    // Gestionnaires d'événements pour l'overlay
+    overlay
+      .on("mousemove", updateTooltip)
+      .on("mouseout", () => {
+        tooltipDiv.style("visibility", "hidden");
+        tooltipLine.style("opacity", 0);
+      })
+      .on("dblclick", (event: MouseEvent) => {
+        if (!onOscilloClick) return;
+        const [x] = d3.pointer(event);
+        const date = xScale.invert(x);
+        // Trouver le point le plus proche
+        const point = data.find(d => {
+          const pointDate = new Date(d.TS);
+          return Math.abs(pointDate.getTime() - date.getTime()) < 1000;
+        });
+        if (point) {
+          onOscilloClick(Number(point.Chrono));
+        }
+      });
+
+    // Fonction de ligne avec vérification des valeurs
+    const line = d3.line<ProcessedDataPoint>()
+      .defined(d => !isNaN(d.value) && !isNaN(d.date.getTime())) // Ignorer les valeurs invalides
+      .x(d => {
+        const x = xScale(d.date);
+        return isNaN(x) ? 0 : x;
+      })
+      .y(d => {
+        const y = yScale(d.value);
+        return isNaN(y) ? 0 : y;
+      })
+      .curve(d3.curveStepAfter);
+
+    // Dessiner les lignes avec le typage correct
+    processed.forEach((series, i) => {
       mainChart.append("path")
         .datum(series.values)
+        .attr("class", "line")
         .attr("fill", "none")
         .attr("stroke", variableColors[i])
         .attr("stroke-width", 1.5)
         .attr("d", line);
-
-      mainChart.selectAll(`.dot-${i}`)
-        .data(series.values)
-        .enter()
-        .append("circle")
-        .attr("class", `dot-${i}`)
-        .attr("cx", d => xScale(d.date))
-        .attr("cy", d => yScale(d.value))
-        .attr("r", 3)
-        .attr("fill", variableColors[i])
-        .on("mouseover", (event: MouseEvent, d: any) => {
-          const [x, y] = d3.pointer(event, svg.node());
-          tooltip
-            .style("visibility", "visible")
-            .html(`
-              <strong>${d.name}</strong><br/>
-              Date: ${d.date.toLocaleString()}<br/>
-              Valeur: ${d.value.toFixed(3)}
-            `)
-            .style("left", (x + 10) + "px")
-            .style("top", (y - 10) + "px");
-        })
-        .on("mouseout", () => {
-          tooltip.style("visibility", "hidden");
-        });
     });
 
-    const navHeight = 50;
+    // Ligne de navigation avec style en escalier
     const navChart = svg.append("g")
       .attr("class", "nav-chart")
-      .attr("transform", `translate(${margin.left},${baseHeight + 10})`);
-
-    const navXScale = xScale.copy();
-    const navYScale = d3.scaleLinear()
-      .domain(yScale.domain())
-      .range([navHeight, 0]);
-
-    const navLine = d3.line<{ date: Date; value: number }>()
-      .x(d => navXScale(d.date))
-      .y(d => navYScale(d.value))
-      .curve(d3.curveStepAfter);
+      .attr("transform", `translate(${margin.left},${mainHeight + margin.top})`);
 
     processed.forEach((series, i) => {
       navChart.append("path")
         .datum(series.values)
+        .attr("class", "nav-line")
         .attr("fill", "none")
         .attr("stroke", variableColors[i])
         .attr("stroke-width", 1)
-        .attr("d", navLine);
+        .attr("d", d3.line<ProcessedDataPoint>()
+          .x(d => d3.scaleTime().domain(extent).range([0, innerWidth])(d.date))
+          .y(d => d3.scaleLinear()
+            .domain(yScale.domain())
+            .range([navHeight, 0])(d.value))
+          .curve(d3.curveStepAfter));  // Ajout du style en escalier
     });
 
-    const zoom = d3.zoom<SVGGElement, unknown>()
-      .scaleExtent([1, 20])
-      .extent([[0, 0], [innerWidth, innerHeight]])
-      .on("zoom", (event) => {
-        if (!event.sourceEvent) return; // Ignorer les événements programmés
-
-        const transform = event.transform;
-        setCurrentZoomState(transform);
-
-        const newXScale = transform.rescaleX(xScale);
-        
-        // Mettre à jour l'axe X
-        mainChart.select(".x-axis").call(d3.axisBottom(newXScale) as any);
-
-        // Mettre à jour les lignes
-        mainChart.selectAll("path")
-          .attr("d", (d: any) => {
-            if (!Array.isArray(d)) return "";
-            return line.x(p => newXScale(p.date))
-                      .y(p => yScale(p.value))(d);
-          });
-
-        // Mettre à jour les points
-        mainChart.selectAll("circle")
-          .attr("cx", (d: any) => newXScale(d.date));
-
-        // Synchroniser avec la brosse
-        if (event.sourceEvent && event.sourceEvent.type !== "brush") {
-          const range = newXScale.domain();
-          const [start, end] = range.map(navXScale);
-          navChart.select(".brush").call(brush.move as any, [start, end]);
-        }
-
-        // Calculer les statistiques
-        const xRange = newXScale.domain();
-        const stats = processed.map(series => {
-          const visibleData = series.values.filter(
-            v => v.date >= xRange[0] && v.date <= xRange[1]
-          );
-          return {
-            variable: series.name,
-            stats: visibleData.length ? calculateStats(visibleData.map(v => v.value)) : null
-          };
-        });
-        onZoom(stats);
-      });
-
-    zoomRef.current = zoom;
-
+    // Configuration de la brosse
     const brush = d3.brushX()
       .extent([[0, 0], [innerWidth, navHeight]])
-      .on("brush", (event) => {
-        if (!event.sourceEvent || event.sourceEvent.type === "zoom") return;
+      .on("brush end", (event) => {
+        if (!event.sourceEvent) return;
 
         const selection = event.selection as [number, number] | null;
         if (!selection) return;
 
+        const navXScale = d3.scaleTime().domain(extent).range([0, innerWidth]);
         const [x0, x1] = selection.map(navXScale.invert);
-        const transform = d3.zoomIdentity
-          .scale(innerWidth / (x1.getTime() - x0.getTime()))
-          .translate(-navXScale(x0), 0);
+        setCurrentDomain([x0, x1]);
 
-        mainChart.call(zoom.transform as any, transform);
+        const stats = processed.map(series => ({
+          variable: series.name,
+          stats: calculateStats(series.values
+            .filter(v => v.date >= x0 && v.date <= x1)
+            .map(v => v.value))
+        }));
+        onZoom(stats);
       });
 
-    // Appliquer le zoom au graphique principal
-    mainChart.call(zoom as any);
+    // Ajout de la brosse au navigateur
+    const brushGroup = navChart.append("g")
+      .attr("class", "brush")
+      .call(brush);
 
-    // Restaurer l'état du zoom précédent
-    if (currentZoomState && currentZoomState !== d3.zoomIdentity) {
-      mainChart.transition().duration(0).call(zoom.transform as any, currentZoomState);
+    // Initialiser la brosse avec la plage complète si pas de domaine courant
+    if (!currentDomain) {
+      brushGroup.call(brush.move as any, [0, innerWidth]);
+    } else {
+      const navXScale = d3.scaleTime().domain(extent).range([0, innerWidth]);
+      brushGroup.call(brush.move as any, currentDomain.map(navXScale));
     }
 
-    // Nettoyer lors du démontage
     return () => {
-      zoomRef.current = null;
-      mainChartRef.current = null;
+      brushGroup.call(brush.move as any, null);
+      tooltipDiv.remove();
     };
 
-  }, [data, selectedVariables, variableColors]);
-
-  // Effet pour restaurer le zoom lors des mises à jour
-  useEffect(() => {
-    if (mainChartRef.current && zoomRef.current && currentZoomState !== d3.zoomIdentity) {
-      mainChartRef.current
-        .transition()
-        .duration(0)
-        .call(zoomRef.current.transform as any, currentZoomState);
-    }
-  }, [currentZoomState]);
+  }, [data, selectedVariables, variableColors, currentDomain, onOscilloClick]);
 
   return (
     <div style={{ width: '100%', position: 'relative' }}>
       <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
-      <div ref={tooltipRef} />
     </div>
   );
 };
