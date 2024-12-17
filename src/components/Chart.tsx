@@ -82,8 +82,8 @@ export const Chart: React.FC<ChartProps> = ({
     const width = svgRef.current.parentElement?.clientWidth || 800;
     const mainHeight = 400;
     const navHeight = 100;
-    const margin = { top: 20, right: 30, bottom: 30, left: 60 };
-    const totalHeight = mainHeight + navHeight + margin.top + margin.bottom;
+    const margin = { top: 20, right: 30, bottom: 60, left: 60 }; // Augmentation de la marge du bas
+    const totalHeight = mainHeight + navHeight + margin.top + margin.bottom + 20; // Ajout d'espace entre les graphiques
 
     // Nettoyage et configuration du SVG
     const svg = d3.select(svgRef.current);
@@ -104,7 +104,9 @@ export const Chart: React.FC<ChartProps> = ({
       values: data
         .filter(d => d.Name === variable.name && d.TextAttr03 === variable.textAttr03)
         .map(d => {
-          const date = new Date(Number(d.Chrono) / 10000); // Conversion du Chrono en timestamp
+          // Conversion correcte de la date
+          const timestamp = Number(d.Chrono) / 10000;
+          const date = new Date(timestamp);
           const value = Number(d.Value);
           
           // Vérification des valeurs invalides
@@ -115,7 +117,7 @@ export const Chart: React.FC<ChartProps> = ({
           
           return { date, value };
         })
-        .filter((d): d is ProcessedDataPoint => d !== null) // Filtrer les valeurs nulles
+        .filter((d): d is ProcessedDataPoint => d !== null)
         .sort((a, b) => a.date.getTime() - b.date.getTime())
     }));
 
@@ -177,17 +179,16 @@ export const Chart: React.FC<ChartProps> = ({
       .call(d3.axisLeft(yScale));
 
     // Création du tooltip
-    const tooltipDiv = d3.select("body").append("div")
+    const tooltip = d3.select("body").append("div")
       .attr("class", "tooltip")
+      .style("opacity", 0)
       .style("position", "absolute")
-      .style("visibility", "hidden")
-      .style("background-color", "rgba(255, 255, 255, 0.9)")
+      .style("background-color", "white")
       .style("border", "1px solid #ddd")
-      .style("border-radius", "4px")
-      .style("padding", "8px")
-      .style("pointer-events", "none")
-      .style("z-index", "9999")
-      .style("font-size", "12px");
+      .style("padding", "10px")
+      .style("pointer-events", "none");
+
+    let tooltipDebounceTimeout: number | null = null;
 
     // Overlay pour la gestion des événements de souris
     const overlay = mainChart.append("rect")
@@ -206,48 +207,43 @@ export const Chart: React.FC<ChartProps> = ({
 
     // Fonction pour mettre à jour le tooltip
     const updateTooltip = (event: MouseEvent) => {
-      const [mouseX] = d3.pointer(event);
-      const date = xScale.invert(mouseX);
-      
-      const tooltipData = processed.map(series => {
-        const bisect = d3.bisector<ProcessedDataPoint, Date>(d => d.date).left;
-        const index = bisect(series.values, date);
-        const point = series.values[index];
-        return {
-          name: series.name,
-          point: point
-        };
-      }).filter(d => d.point && !isNaN(d.point.value));
-
-      if (tooltipData.length > 0) {
-        tooltipLine
-          .style("opacity", 1)
-          .attr("x1", mouseX)
-          .attr("x2", mouseX)
-          .attr("y1", 0)
-          .attr("y2", mainInnerHeight);
-
-        tooltipDiv
-          .style("visibility", "visible")
-          .style("left", (event.pageX + 15) + "px")
-          .style("top", (event.pageY - 28) + "px")
-          .html(`
-            <strong>Date: ${timeFormat(date)}</strong><br/>
-            ${tooltipData.map((d, i) => `
-              <span style="color:${variableColors[i]}">
-                ${d.name}: ${d.point.value.toFixed(3)}
-              </span>
-            `).join("<br/>")}
-          `);
+      if (tooltipDebounceTimeout) {
+        window.clearTimeout(tooltipDebounceTimeout);
       }
+
+      tooltipDebounceTimeout = window.setTimeout(() => {
+        const [xPos] = d3.pointer(event);
+        const x0 = xScale.invert(xPos);
+        
+        // Trouver les points les plus proches pour chaque série
+        const tooltipContent = processed.map((series, i) => {
+          const bisect = d3.bisector((d: ProcessedDataPoint) => d.date).left;
+          const index = bisect(series.values, x0, 1);
+          if (index === 0) return null;
+          
+          const d0 = series.values[index - 1];
+          const d1 = series.values[index];
+          if (!d0 || !d1) return null;
+          
+          const point = x0.getTime() - d0.date.getTime() > d1.date.getTime() - x0.getTime() ? d1 : d0;
+          return `<div style="color:${variableColors[i]}">${series.name}: ${point.value.toFixed(3)}</div>`;
+        }).filter(Boolean).join('');
+
+        if (tooltipContent) {
+          tooltip
+            .style("opacity", 1)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 10) + "px")
+            .html(`<div style="font-weight:bold">${timeFormat(x0)}</div>${tooltipContent}`);
+        }
+      }, 50); // Délai réduit pour plus de réactivité
     };
 
     // Gestionnaires d'événements pour l'overlay
     overlay
       .on("mousemove", updateTooltip)
       .on("mouseout", () => {
-        tooltipDiv.style("visibility", "hidden");
-        tooltipLine.style("opacity", 0);
+        tooltip.style("opacity", 0);
       })
       .on("dblclick", (event: MouseEvent) => {
         if (!onOscilloClick) return;
@@ -287,10 +283,61 @@ export const Chart: React.FC<ChartProps> = ({
         .attr("d", line);
     });
 
+    // Gestion du tooltip sur les lignes
+    mainChart.selectAll(".line")
+      .on("mouseover", function(event, d) {
+        if (tooltipDebounceTimeout) {
+          window.clearTimeout(tooltipDebounceTimeout);
+        }
+        tooltip.style("opacity", 1);
+      })
+      .on("mousemove", function(event, d) {
+        const [xPos] = d3.pointer(event);
+        const x0 = xScale.invert(xPos);
+        
+        // Trouver le point le plus proche
+        const bisect = d3.bisector((d: ProcessedDataPoint) => d.date).left;
+        const series = d3.select(this).datum() as ProcessedDataPoint[];
+        const index = bisect(series, x0, 1);
+        const d0 = series[index - 1];
+        const d1 = series[index];
+        const point = x0.getTime() - d0.date.getTime() > d1.date.getTime() - x0.getTime() ? d1 : d0;
+
+        tooltip
+          .html(`Date: ${timeFormat(point.date)}<br/>Valeur: ${point.value.toFixed(3)}`)
+          .style("left", (event.pageX + 10) + "px")
+          .style("top", (event.pageY - 10) + "px");
+      })
+      .on("mouseout", function() {
+        if (tooltipDebounceTimeout) {
+          window.clearTimeout(tooltipDebounceTimeout);
+        }
+        tooltip.style("opacity", 0);
+      });
+
     // Ligne de navigation avec style en escalier
     const navChart = svg.append("g")
       .attr("class", "nav-chart")
       .attr("transform", `translate(${margin.left},${mainHeight + margin.top})`);
+
+    // Style du navigateur de zoom
+    const navBackground = navChart.append("rect")
+      .attr("class", "nav-background")
+      .attr("width", innerWidth)
+      .attr("height", navHeight)
+      .attr("fill", "#f5f5f5")
+      .attr("stroke", "#ddd")
+      .attr("stroke-width", 1);
+
+    // Ajout d'un titre pour le navigateur
+    navChart.append("text")
+      .attr("class", "nav-title")
+      .attr("x", -40)
+      .attr("y", navHeight / 2)
+      .attr("text-anchor", "end")
+      .attr("dominant-baseline", "middle")
+      .style("font-size", "12px")
+      .text("Zoom");
 
     processed.forEach((series, i) => {
       navChart.append("path")
@@ -307,7 +354,8 @@ export const Chart: React.FC<ChartProps> = ({
           .curve(d3.curveStepAfter));  // Ajout du style en escalier
     });
 
-    // Configuration de la brosse
+    // Configuration de la brosse avec debounce
+    let brushTimeout: number | null = null;
     const brush = d3.brushX()
       .extent([[0, 0], [innerWidth, navHeight]])
       .on("brush end", (event) => {
@@ -316,17 +364,30 @@ export const Chart: React.FC<ChartProps> = ({
         const selection = event.selection as [number, number] | null;
         if (!selection) return;
 
-        const navXScale = d3.scaleTime().domain(extent).range([0, innerWidth]);
-        const [x0, x1] = selection.map(navXScale.invert);
-        setCurrentDomain([x0, x1]);
+        // Annuler le timeout précédent
+        if (brushTimeout) {
+          window.clearTimeout(brushTimeout);
+        }
 
-        const stats = processed.map(series => ({
-          variable: series.name,
-          stats: calculateStats(series.values
-            .filter(v => v.date >= x0 && v.date <= x1)
-            .map(v => v.value))
-        }));
-        onZoom(stats);
+        // Créer un nouveau timeout
+        brushTimeout = window.setTimeout(() => {
+          const navXScale = d3.scaleTime().domain(extent).range([0, innerWidth]);
+          const [x0, x1] = selection.map(navXScale.invert);
+          setCurrentDomain([x0, x1]);
+
+          // Mise à jour des statistiques avec un léger délai
+          const zoomedData = processed.map(series => {
+            const filteredValues = series.values
+              .filter(d => d.date >= x0 && d.date <= x1)
+              .map(d => d.value);
+            return {
+              variable: series.name,
+              stats: filteredValues.length > 0 ? calculateStats(filteredValues) : null
+            };
+          });
+
+          onZoom(zoomedData);
+        }, 100); // Délai de 100ms
       });
 
     // Ajout de la brosse au navigateur
@@ -344,7 +405,7 @@ export const Chart: React.FC<ChartProps> = ({
 
     return () => {
       brushGroup.call(brush.move as any, null);
-      tooltipDiv.remove();
+      tooltip.remove();
     };
 
   }, [data, selectedVariables, variableColors, currentDomain, onOscilloClick]);
